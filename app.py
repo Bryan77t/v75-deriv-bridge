@@ -1,6 +1,8 @@
+
 from flask import Flask, request, render_template_string, jsonify
 import asyncio
-from deriv_api import DerivAPI
+import json
+import websockets
 
 app = Flask(__name__)
 
@@ -58,36 +60,42 @@ async def execute_deriv_trade(payload):
     sl = payload.get("sl")
     tp = payload.get("tp")
 
-    api = DerivAPI(app_id=APP_ID)
-    try:
-        await api.authorize(token)
+    ws_url = f"wss://ws.derivws.com/websockets/v3?app_id={APP_ID}"
+    async with websockets.connect(ws_url) as ws:
+        await ws.send(json.dumps({"authorize": token}))
+        auth_res = json.loads(await ws.recv())
+        if "error" in auth_res:
+            raise Exception(f"Auth error: {auth_res['error']['message']}")
+
         contract_type = "MULTUP" if action == "BUY" else "MULTDOWN"
-        
-        proposal = await api.proposal({
+        prop_req = {
             "proposal": 1,
             "amount": amount,
             "basis": "stake",
             "contract_type": contract_type,
             "currency": "USD",
             "symbol": symbol
-        })
-        
-        req = {
-            "buy": proposal["proposal"]["id"],
-            "price": proposal["proposal"]["ask_price"]
         }
-        
+        await ws.send(json.dumps(prop_req))
+        prop_res = json.loads(await ws.recv())
+        if "error" in prop_res:
+            raise Exception(f"Proposal error: {prop_res['error']['message']}")
+
+        buy_req = {
+            "buy": prop_res["proposal"]["id"],
+            "price": prop_res["proposal"]["ask_price"]
+        }
         limit_order = {}
         if sl: limit_order["stop_loss"] = float(sl)
         if tp: limit_order["take_profit"] = float(tp)
-        if limit_order: req["limit_order"] = limit_order
+        if limit_order: buy_req["limit_order"] = limit_order
 
-        res = await api.buy(req)
-        await api.disconnect()
-        return res
-    except Exception as e:
-        await api.disconnect()
-        raise e
+        await ws.send(json.dumps(buy_req))
+        buy_res = json.loads(await ws.recv())
+        if "error" in buy_res:
+            raise Exception(f"Buy error: {buy_res['error']['message']}")
+
+        return buy_res
 
 @app.route('/')
 def home():
