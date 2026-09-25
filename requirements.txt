@@ -1,0 +1,4 @@
+flask
+gunicorn
+deriv-api
+requests
