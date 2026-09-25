@@ -1,4 +1,4 @@
 flask
 gunicorn
-deriv-api
+websockets
 requests
